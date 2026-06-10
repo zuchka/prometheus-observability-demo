@@ -1,0 +1,9 @@
+# Add this item under the existing scrape_configs list in prometheus.yml.
+- job_name: demo_api
+  scrape_interval: 5s
+  metrics_path: /metrics
+  static_configs:
+    - targets: ["127.0.0.1:8080"]
+      labels:
+        service: demo-api
+

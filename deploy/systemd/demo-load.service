@@ -1,0 +1,30 @@
+[Unit]
+Description=Prometheus demo traffic generator
+After=network-online.target demo-api.service
+Wants=network-online.target
+Requires=demo-api.service
+
+[Service]
+Type=simple
+User=demo-observability
+Group=demo-observability
+EnvironmentFile=/etc/demo-observability/demo.env
+WorkingDirectory=/var/lib/demo-observability
+ExecStart=/usr/local/bin/demo-load
+Restart=always
+RestartSec=5
+Nice=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+MemoryMax=96M
+CPUQuota=50%
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
+

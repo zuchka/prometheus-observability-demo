@@ -1,0 +1,30 @@
+[Unit]
+Description=Prometheus demo API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=demo-observability
+Group=demo-observability
+EnvironmentFile=/etc/demo-observability/demo.env
+WorkingDirectory=/var/lib/demo-observability
+ExecStart=/usr/local/bin/demo-api
+Restart=always
+RestartSec=3
+Nice=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/demo-observability
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+MemoryMax=160M
+CPUQuota=70%
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
+
