@@ -4,6 +4,16 @@ This runbook assumes the droplet already runs Prometheus and node_exporter. It d
 
 Run the commands on the droplet as a sudo-capable user, such as `deploy`. The examples assume the repository is cloned at `~/prometheus-observability-demo`.
 
+You can paste the multi-line `bash` blocks directly into the SSH session. Do not paste the surrounding triple backticks. The install block in section 3 is safe to rerun and preserves an existing `/etc/demo-observability/demo.env`.
+
+Important systemd details:
+
+- Run the commands as `deploy`, but use `sudo` for system files.
+- `-o root -g root` means the installed file is owned by root. That is correct for `/etc/systemd/system/*` and `/usr/local/bin/*`.
+- The services run as the locked-down `demo-observability` user, not as `root` or `deploy`.
+- systemd only sees units installed under paths like `/etc/systemd/system/`; it does not read service files from the repo checkout.
+- After installing or changing unit files, always run `sudo systemctl daemon-reload`.
+
 ## 1. Clone or Update the Repo
 
 ```bash
@@ -37,12 +47,16 @@ If you are building natively on the droplet, this also works:
 make build
 ```
 
-The install commands below prefer the `bin/linux-amd64` outputs and fall back to the native `bin` outputs if you used `make build`.
+## 3. Install or Repair the Demo Services
 
-## 3. Install the Demo Services
+This single block installs the binaries, service files, runtime directories, environment file, and systemd services. It also fixes the common partial-install state where systemd sees the unit files but cannot start them.
 
 ```bash
-REPO_DIR="$HOME/prometheus-observability-demo"
+set -e
+
+cd ~/prometheus-observability-demo
+REPO_DIR="$PWD"
+
 DEMO_API_BIN="$REPO_DIR/bin/linux-amd64/demo-api"
 DEMO_LOAD_BIN="$REPO_DIR/bin/linux-amd64/demo-load"
 
@@ -59,6 +73,8 @@ if [ ! -x "$DEMO_API_BIN" ] || [ ! -x "$DEMO_LOAD_BIN" ]; then
   exit 1
 fi
 
+sudo systemctl stop demo-load.service demo-api.service 2>/dev/null || true
+
 if ! id -u demo-observability >/dev/null 2>&1; then
   sudo useradd --system --home /var/lib/demo-observability --shell /usr/sbin/nologin demo-observability
 fi
@@ -72,12 +88,6 @@ sudo install -o root -g root -m 0755 "$DEMO_LOAD_BIN" /usr/local/bin/demo-load
 
 sudo install -o root -g root -m 0644 "$REPO_DIR/deploy/systemd/demo-api.service" /etc/systemd/system/demo-api.service
 sudo install -o root -g root -m 0644 "$REPO_DIR/deploy/systemd/demo-load.service" /etc/systemd/system/demo-load.service
-```
-
-Create the environment file. This preserves an existing token if the file already exists:
-
-```bash
-REPO_DIR="$HOME/prometheus-observability-demo"
 
 if [ ! -f /etc/demo-observability/demo.env ]; then
   TOKEN="$(openssl rand -hex 24)"
@@ -86,23 +96,17 @@ if [ ! -f /etc/demo-observability/demo.env ]; then
 else
   echo "/etc/demo-observability/demo.env already exists; leaving it unchanged"
 fi
-```
 
-Start or restart the app and generator:
-
-```bash
 sudo systemctl daemon-reload
+sudo systemctl reset-failed demo-api.service demo-load.service
 sudo systemctl enable demo-api.service demo-load.service
 sudo systemctl restart demo-api.service demo-load.service
-```
 
-Check status:
-
-```bash
+systemctl list-unit-files | grep demo
 sudo systemctl status demo-api.service --no-pager
 sudo systemctl status demo-load.service --no-pager
 
-curl -fsS http://127.0.0.1:8080/healthz && echo
+curl -fsS http://127.0.0.1:8080/healthz
 curl -fsS http://127.0.0.1:8080/metrics | grep '^demo_chaos_mode'
 ```
 
@@ -291,6 +295,49 @@ Resource limits are intentionally conservative:
 The demo API listens on `127.0.0.1:8080` by default. Do not expose this service directly to the internet. Public users should see Grafana, Prometheus behind Caddy, or another dashboard surface, not `/metrics` or `/chaos`.
 
 ## 8. Troubleshooting
+
+Systemd does not see the services:
+
+```bash
+cd ~/prometheus-observability-demo
+
+sudo install -o root -g root -m 0644 deploy/systemd/demo-api.service /etc/systemd/system/demo-api.service
+sudo install -o root -g root -m 0644 deploy/systemd/demo-load.service /etc/systemd/system/demo-load.service
+sudo systemctl daemon-reload
+
+sudo systemctl cat demo-api.service --no-pager
+sudo systemctl cat demo-load.service --no-pager
+```
+
+`systemctl cat demo-api.service` says `No files found`:
+
+- The unit file has not been installed into `/etc/systemd/system/`.
+- Install the service files with the commands above, then run `sudo systemctl daemon-reload`.
+
+`demo-api.service` fails with `status=226/NAMESPACE`:
+
+- systemd could not set up the service sandbox.
+- In this repo's unit files, the usual cause is that `/var/lib/demo-observability` does not exist.
+- Run section 3 again. It creates `/var/lib/demo-observability` and `/var/lib/demo-observability/tmp` with the correct owner.
+
+`demo-load.service` fails with `status=203/EXEC`:
+
+- systemd could not execute `/usr/local/bin/demo-load`.
+- The binary is missing, not executable, or built for the wrong architecture.
+- Run section 2, then section 3 again.
+
+Useful systemd checks:
+
+```bash
+ls -ld /var/lib/demo-observability /var/lib/demo-observability/tmp
+ls -l /usr/local/bin/demo-api /usr/local/bin/demo-load
+file /usr/local/bin/demo-api /usr/local/bin/demo-load
+
+sudo systemctl status demo-api.service --no-pager
+sudo systemctl status demo-load.service --no-pager
+sudo journalctl -u demo-api.service -n 80 --no-pager
+sudo journalctl -u demo-load.service -n 80 --no-pager
+```
 
 No app metrics in Prometheus:
 
