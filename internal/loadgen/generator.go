@@ -60,7 +60,12 @@ func (g *Generator) RunSequence(ctx context.Context, steps []ProfileStep, loop b
 		logf = func(string, ...any) {}
 	}
 	for {
-		for _, step := range steps {
+		cycle := steps
+		if isDefaultLoopSequence(steps) {
+			cycle = g.randomizedLoopSequence(steps)
+			logf("starting randomized loop cycle phases=%s", strings.Join(stepPhases(cycle), ","))
+		}
+		for _, step := range cycle {
 			stats, err := g.RunStep(ctx, step, logf)
 			if err != nil {
 				return err
@@ -100,9 +105,9 @@ func (g *Generator) RunStep(ctx context.Context, step ProfileStep, logf func(str
 	}
 
 	timer := time.NewTimer(step.Duration)
-	ticker := time.NewTicker(interval)
+	requestTimer := time.NewTimer(g.jitteredInterval(interval))
 	defer timer.Stop()
-	defer ticker.Stop()
+	defer requestTimer.Stop()
 
 	for {
 		select {
@@ -110,7 +115,7 @@ func (g *Generator) RunStep(ctx context.Context, step ProfileStep, logf func(str
 			return StepStats{Requests: requests.Load(), Errors: errors.Load()}, ctx.Err()
 		case <-timer.C:
 			return StepStats{Requests: requests.Load(), Errors: errors.Load()}, nil
-		case <-ticker.C:
+		case <-requestTimer.C:
 			endpoint := g.pick(step.Endpoints)
 			requests.Add(1)
 			go func() {
@@ -118,6 +123,7 @@ func (g *Generator) RunStep(ctx context.Context, step ProfileStep, logf func(str
 					errors.Add(1)
 				}
 			}()
+			requestTimer.Reset(g.jitteredInterval(interval))
 		}
 	}
 }
@@ -199,4 +205,30 @@ func (g *Generator) pick(endpoints []Endpoint) Endpoint {
 		}
 	}
 	return endpoints[0]
+}
+
+func (g *Generator) randomizedLoopSequence(steps []ProfileStep) []ProfileStep {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return randomizedLoopSequence(steps, g.rng)
+}
+
+func (g *Generator) jitteredInterval(base time.Duration) time.Duration {
+	g.mu.Lock()
+	factor := 0.35 + g.rng.Float64()*1.30
+	g.mu.Unlock()
+
+	interval := time.Duration(float64(base) * factor)
+	if interval < 25*time.Millisecond {
+		return 25 * time.Millisecond
+	}
+	return interval
+}
+
+func stepPhases(steps []ProfileStep) []string {
+	phases := make([]string, 0, len(steps))
+	for _, step := range steps {
+		phases = append(phases, step.Phase)
+	}
+	return phases
 }

@@ -2,6 +2,7 @@ package loadgen
 
 import (
 	"fmt"
+	"math/rand"
 	"time"
 )
 
@@ -74,6 +75,78 @@ func DefaultSequence() []ProfileStep {
 		cpuIOPulseStep(),
 		recoveryStep(),
 	}
+}
+
+func isDefaultLoopSequence(steps []ProfileStep) bool {
+	defaultSteps := DefaultSequence()
+	if len(steps) != len(defaultSteps) {
+		return false
+	}
+	for i := range steps {
+		if steps[i].Phase != defaultSteps[i].Phase || steps[i].ChaosMode != defaultSteps[i].ChaosMode {
+			return false
+		}
+	}
+	return true
+}
+
+func randomizedLoopSequence(steps []ProfileStep, rng *rand.Rand) []ProfileStep {
+	if !isDefaultLoopSequence(steps) {
+		return cloneSteps(steps)
+	}
+
+	byPhase := make(map[string]ProfileStep, len(steps))
+	for _, step := range steps {
+		if _, ok := byPhase[step.Phase]; !ok {
+			byPhase[step.Phase] = step
+		}
+	}
+
+	chaos := []ProfileStep{
+		byPhase[PhaseBurst],
+		byPhase[PhaseErrorStorm],
+		byPhase[PhaseLatencySpike],
+		byPhase[PhaseCPUIOPulse],
+	}
+	rng.Shuffle(len(chaos), func(i, j int) {
+		chaos[i], chaos[j] = chaos[j], chaos[i]
+	})
+
+	sequence := []ProfileStep{
+		jitterStep(byPhase[PhaseBaseline], rng, 0.65, 1.55, 0.85, 1.20),
+	}
+	for _, step := range chaos {
+		sequence = append(sequence, jitterStep(step, rng, 0.65, 1.55, 0.85, 1.25))
+		sequence = append(sequence, jitterStep(byPhase[PhaseRecovery], rng, 0.45, 2.10, 0.75, 1.35))
+	}
+	return sequence
+}
+
+func cloneSteps(steps []ProfileStep) []ProfileStep {
+	cloned := make([]ProfileStep, len(steps))
+	copy(cloned, steps)
+	return cloned
+}
+
+func jitterStep(step ProfileStep, rng *rand.Rand, minDurationFactor, maxDurationFactor, minRPSFactor, maxRPSFactor float64) ProfileStep {
+	step.Duration = scaleDuration(step.Duration, rng, minDurationFactor, maxDurationFactor)
+	step.RPS = scaleFloat(step.RPS, rng, minRPSFactor, maxRPSFactor)
+	return step
+}
+
+func scaleDuration(value time.Duration, rng *rand.Rand, minFactor, maxFactor float64) time.Duration {
+	scaled := time.Duration(float64(value) * scaleFloat(1, rng, minFactor, maxFactor))
+	if scaled < 10*time.Second {
+		return 10 * time.Second
+	}
+	return scaled.Round(time.Second)
+}
+
+func scaleFloat(value float64, rng *rand.Rand, minFactor, maxFactor float64) float64 {
+	if maxFactor <= minFactor {
+		return value * minFactor
+	}
+	return value * (minFactor + rng.Float64()*(maxFactor-minFactor))
 }
 
 func baselineStep() ProfileStep {

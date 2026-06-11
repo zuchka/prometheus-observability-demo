@@ -3,6 +3,7 @@ package loadgen
 import (
 	"context"
 	"encoding/json"
+	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -39,6 +40,59 @@ func TestSequenceIncludesExpectedPhases(t *testing.T) {
 	}
 }
 
+func TestRandomizedLoopSequenceKeepsAllChaosPhases(t *testing.T) {
+	base := DefaultSequence()
+	randomized := randomizedLoopSequence(base, rand.New(rand.NewSource(7)))
+	if len(randomized) != len(base) {
+		t.Fatalf("expected %d randomized steps, got %d", len(base), len(randomized))
+	}
+	if randomized[0].Phase != PhaseBaseline {
+		t.Fatalf("expected randomized sequence to start with baseline, got %s", randomized[0].Phase)
+	}
+
+	seen := map[string]int{}
+	for _, step := range randomized {
+		seen[step.Phase]++
+		if step.RPS <= 0 {
+			t.Fatalf("step %q has invalid RPS %.2f", step.Name, step.RPS)
+		}
+		if step.Duration <= 0 {
+			t.Fatalf("step %q has invalid duration %s", step.Name, step.Duration)
+		}
+	}
+
+	for _, phase := range []string{PhaseBurst, PhaseErrorStorm, PhaseLatencySpike, PhaseCPUIOPulse} {
+		if seen[phase] != 1 {
+			t.Fatalf("expected exactly one %s phase, saw %d", phase, seen[phase])
+		}
+	}
+	if seen[PhaseRecovery] != 4 {
+		t.Fatalf("expected four recovery phases, saw %d", seen[PhaseRecovery])
+	}
+}
+
+func TestRandomizedLoopSequenceChangesChaosOrderAndDurations(t *testing.T) {
+	base := DefaultSequence()
+	randomized := randomizedLoopSequence(base, rand.New(rand.NewSource(3)))
+
+	baseChaos := chaosPhases(base)
+	randomizedChaos := chaosPhases(randomized)
+	if equalStrings(baseChaos, randomizedChaos) {
+		t.Fatalf("expected randomized chaos order to differ from default, got %v", randomizedChaos)
+	}
+
+	changedDuration := false
+	for i := range base {
+		if randomized[i].Duration != base[i].Duration {
+			changedDuration = true
+			break
+		}
+	}
+	if !changedDuration {
+		t.Fatal("expected at least one randomized duration to differ from default")
+	}
+}
+
 func TestSetChaosSendsTokenAndPayload(t *testing.T) {
 	var gotToken string
 	var gotBody map[string]any
@@ -64,6 +118,29 @@ func TestSetChaosSendsTokenAndPayload(t *testing.T) {
 	if gotBody["mode"].(float64) != 2 || gotBody["phase"].(string) != PhaseLatencySpike {
 		t.Fatalf("unexpected body: %#v", gotBody)
 	}
+}
+
+func chaosPhases(steps []ProfileStep) []string {
+	phases := []string{}
+	for _, step := range steps {
+		switch step.Phase {
+		case PhaseBurst, PhaseErrorStorm, PhaseLatencySpike, PhaseCPUIOPulse:
+			phases = append(phases, step.Phase)
+		}
+	}
+	return phases
+}
+
+func equalStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestRunStepGeneratesRequests(t *testing.T) {

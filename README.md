@@ -5,7 +5,7 @@ This project creates useful Prometheus and Grafana demo data on a small 1 vCPU, 
 It provides:
 
 - `demo-api`: a private localhost Go HTTP app with Prometheus metrics.
-- `demo-load`: a bounded traffic generator that cycles through realistic workload phases.
+- `demo-load`: a bounded traffic generator that cycles through randomized realistic workload phases.
 - systemd units for a droplet that already runs Prometheus and node_exporter.
 - a Prometheus scrape snippet.
 - an importable Grafana app dashboard.
@@ -98,7 +98,9 @@ curl -s \
 
 ## Traffic Profiles
 
-The default `loop` profile repeats these phases:
+The default `loop` profile continuously generates randomized demo traffic. Each loop starts from baseline, then shuffles the chaos phases, jitters phase durations and request rates, inserts variable recovery gaps, and adds jitter to per-request timing. This keeps the same kinds of spikes without producing a perfectly repeating pattern.
+
+Each randomized loop includes these phases:
 
 - `baseline`: low steady traffic.
 - `burst`: short request-rate spike.
@@ -107,7 +109,7 @@ The default `loop` profile repeats these phases:
 - `latency_spike`: slower synthetic dependencies.
 - `cpu_io_pulse`: more CPU, disk I/O, and memory activity.
 
-The generator keeps rates conservative for a 512 MB droplet. To run one phase, use `-profile=baseline`, `-profile=burst`, `-profile=error-storm`, `-profile=latency-spike`, `-profile=cpu-io-pulse`, or `-profile=recovery`.
+The generator keeps rates conservative for a 512 MB droplet. To run one deterministic phase, use `-profile=baseline`, `-profile=burst`, `-profile=error-storm`, `-profile=latency-spike`, `-profile=cpu-io-pulse`, or `-profile=recovery`.
 
 ## Deployment
 

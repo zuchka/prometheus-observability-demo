@@ -376,7 +376,7 @@ The node dashboard is still flat:
 
 - Confirm `demo-load.service` is running.
 - Confirm the Node Exporter dashboard is looking at the correct instance.
-- Wait through a full loop. The CPU/I/O phase occurs after baseline, burst, error, and latency phases.
+- Wait through a full randomized loop. The CPU/I/O phase appears once per loop, but its position and timing vary.
 - Temporarily run a stronger local pulse:
 
 ```bash
