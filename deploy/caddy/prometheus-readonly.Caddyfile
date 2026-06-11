@@ -1,0 +1,16 @@
+# Replace prometheus.example.com with your real Prometheus hostname.
+# This is intentionally public and unauthenticated, but it only proxies
+# read-style requests to Prometheus.
+prometheus.example.com {
+    @prometheusAdmin {
+        path /-/reload /-/quit /api/*/admin/*
+    }
+    respond @prometheusAdmin "Prometheus admin endpoint is not exposed." 403
+
+    @notReadMethod {
+        not method GET HEAD OPTIONS
+    }
+    respond @notReadMethod "Only GET, HEAD, and OPTIONS are exposed publicly." 405
+
+    reverse_proxy 127.0.0.1:9090
+}

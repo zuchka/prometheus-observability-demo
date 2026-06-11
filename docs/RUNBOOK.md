@@ -172,9 +172,13 @@ Confirm the target is up:
 curl -fsS 'http://127.0.0.1:9090/api/v1/targets?state=active' | grep demo_api
 ```
 
-## 5. Expose Prometheus with Caddy
+## 5. Expose Prometheus Publicly with Read-Only Caddy
 
 Skip this section if Prometheus will only be used locally or through Grafana. Do not expose raw port `9090` publicly.
+
+This setup makes the Prometheus web UI public without password protection. "Read-only" means Caddy blocks lifecycle/admin paths and only allows `GET`, `HEAD`, and `OPTIONS` through to Prometheus. Public users can still see and query whatever data Prometheus exposes, so treat metric names, labels, target names, and status pages as public information.
+
+Prometheus lifecycle endpoints (`/-/reload`, `/-/quit`) and TSDB admin APIs are disabled by default unless Prometheus is started with `--web.enable-lifecycle` or `--web.enable-admin-api`. The Caddy rules below block those public paths even if those flags are enabled later. Public `POST` requests are also blocked, including POST-based read queries; use GET query URLs for public read access.
 
 In Cloudflare DNS, create an `A` record:
 
@@ -215,34 +219,23 @@ sudo ufw --force enable
 sudo ufw status verbose
 ```
 
-Create a Caddy config with basic auth:
+Create a public, read-only Caddy config. This config is also tracked at `deploy/caddy/prometheus-readonly.Caddyfile`.
 
 ```bash
 DOMAIN="prometheus.example.com"
-HASH="$(caddy hash-password)"
 
 sudo tee /etc/caddy/Caddyfile >/dev/null <<EOF
 $DOMAIN {
-    basic_auth {
-        admin $HASH
+    @prometheusAdmin {
+        path /-/reload /-/quit /api/*/admin/*
     }
+    respond @prometheusAdmin "Prometheus admin endpoint is not exposed." 403
 
-    reverse_proxy 127.0.0.1:9090
-}
-EOF
+    @notReadMethod {
+        not method GET HEAD OPTIONS
+    }
+    respond @notReadMethod "Only GET, HEAD, and OPTIONS are exposed publicly." 405
 
-sudo caddy fmt --overwrite /etc/caddy/Caddyfile
-sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl reload caddy
-```
-
-If you intentionally want no password protection, replace the Caddyfile with:
-
-```bash
-DOMAIN="prometheus.example.com"
-
-sudo tee /etc/caddy/Caddyfile >/dev/null <<EOF
-$DOMAIN {
     reverse_proxy 127.0.0.1:9090
 }
 EOF
@@ -268,7 +261,11 @@ DROPLET_IP="YOUR_DROPLET_PUBLIC_IPV4"
 
 curl -v --connect-timeout 10 --max-time 30 "http://$DOMAIN/"
 curl -vk --connect-timeout 10 --max-time 30 --resolve "$DOMAIN:443:$DROPLET_IP" "https://$DOMAIN/"
+curl -i -X POST --connect-timeout 10 --max-time 30 "https://$DOMAIN/-/reload"
+curl -i -X POST --connect-timeout 10 --max-time 30 "https://$DOMAIN/api/v1/admin/tsdb/snapshot"
 ```
+
+The public Prometheus UI should load over HTTPS. The two `POST` checks should be blocked by Caddy with `405` or `403`.
 
 ## 6. Import Grafana Dashboard
 
